@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Z-TRONIK - Loyalty System</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- QRCode Generator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { max-width: 480px; margin: 0 auto; overflow-x: hidden; }
+        .loader {
+            border: 3px solid rgba(255,255,255,0.1);
+            border-bottom-color: #22c55e;
+            border-radius: 50%;
+            display: inline-block;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        }
+        @keyframes rotation {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Pastikan app selalu full height portrait */
+        #app { min-height: 100svh; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-h-screen flex flex-col">
+
+    <div id="app" class="flex-1 flex flex-col">
+        <!-- Konten akan dirender oleh JavaScript -->
+    </div>
+
+    <!-- Overlay Loading -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-slate-900/85 z-50 hidden flex-col items-center justify-center">
+        <span class="loader w-12 h-12 mb-4"></span>
+        <p class="text-green-400 font-medium animate-pulse">Memproses data...</p>
+    </div>
+
+<script>
+    /* ==========================================
+       KONFIGURASI GOOGLE APPS SCRIPT
+       ========================================== */
+    // GANTI URL DI BAWAH INI DENGAN URL WEB APP GOOGLE APPS SCRIPT ANDA!
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxlApkTKy9hVLkPtWhFX85Gwb42CQxn-R5u4RVcIAsYE2wWh3Pg9uiiU1oVU-NC6t7-/exec"; 
+
+    /* ==========================================
+       STATE APLIKASI
+       ========================================== */
+    let state = {
+        users: [], // Data admin
+        currentUser: null, // Objek user atau 'ADMIN'
+        loginMode: 'member',
+        loginInput: '',
+        errorMsg: '',
+        searchTerm: '',
+        showAddForm: false,
+        newMemberName: '',
+        newMemberPhone: '',
+        isLoading: false,
+        maxStamps: 20, // Jumlah kolom stempel default
+        stampHistory: [], // Riwayat stempel
+        showStampMenu: false, // Tampil menu tambah/kurangi stempel di admin
+        stampChangeAmount: 1, // Jumlah stempel yang akan ditambah/kurangi
+        confirmModal: null, // { userId, change, userName } untuk konfirmasi stempel
+        activeMenu: 'stamps', // Tab menu member: 'stamps' | 'history' | 'rewards' | 'qr'
+        confirmInline: null, // { userId, change, userName } konfirmasi cepat inline di tabel
+        rewards: [
+            { stamps: 5,  label: 'Diskon 5%',       icon: 'tag' },
+            { stamps: 10, label: 'Diskon 10%',      icon: 'percent' },
+            { stamps: 20, label: 'Servis Gratis',   icon: 'wrench' },
+            { stamps: 30, label: 'Hadiah Spesial',  icon: 'gift' }
+        ]
+    };
+
+    /* ==========================================
+       FUNGSI BANTUAN (API CALLS)
+       ========================================== */
+    function showLoading(show) {
+        document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+    }
+
+    async function apiCall(action, payload = {}) {
+        // Jika GAS URL belum diisi, gunakan mode demo lokal
+        if (!GAS_URL || GAS_URL.trim() === "") {
+            return mockApiCall(action, payload);
+        }
+
+        try {
+            showLoading(true);
+            const response = await fetch(GAS_URL, {
+                method: 'POST',
+                // Gunakan text/plain untuk menghindari preflight CORS issue di GAS
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action, ...payload })
+            });
+            const data = await response.json();
+            showLoading(false);
+            if(!data.success) throw new Error(data.message);
+            return data;
+        } catch (error) {
+            showLoading(false);
+            console.error("API Error:", error);
+            alert("Terjadi kesalahan koneksi/sistem: " + error.message);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // --- Mock API untuk DEMO jika URL GAS kosong ---
+    async function mockApiCall(action, payload) {
+        return new Promise((resolve) => {
+            showLoading(true);
+            setTimeout(() => {
+                showLoading(false);
+                if (action === 'getUsers') {
+                    resolve({ success: true, users: state.users });
+                } else if (action === 'addMember') {
+                    const exists = state.users.find(u => u.phone === payload.phone);
+                    if (exists) resolve({ success: false, message: 'Nomor HP sudah terdaftar!' });
+                    else {
+                        const newUser = { id: Date.now(), name: payload.name, phone: payload.phone, stamps: 0 };
+                        state.users.push(newUser);
+                        resolve({ success: true, user: newUser });
+                    }
+                } else if (action === 'updateStamps') {
+                    const u = state.users.find(u => u.id === payload.id);
+                    if (u) u.stamps = Math.max(0, u.stamps + payload.change);
+                    resolve({ success: true });
+                }
+            }, 500); // Simulasi delay network 500ms
+        });
+    }
+
+    /* ==========================================
+       LOGIKA AKSI
+       ========================================== */
+    window.setLoginMode = (mode) => {
+        state.loginMode = mode;
+        state.errorMsg = '';
+        state.loginInput = '';
+        render();
+    };
+
+    window.handleLoginInput = (val) => { state.loginInput = val; };
+    window.handleSearchInput = (val) => { state.searchTerm = val; render(); };
+    window.handleNewMemberName = (val) => { state.newMemberName = val; };
+    window.handleNewMemberPhone = (val) => { state.newMemberPhone = val; };
+    window.handleMaxStamps = (val) => { state.maxStamps = parseInt(val) || 20; };
+    window.handleStampChangeAmount = (val) => { state.stampChangeAmount = parseInt(val) || 1; };
+    window.toggleStampMenu = () => { state.showStampMenu = !state.showStampMenu; render(); };
+    window.setActiveMenu = (menu) => { state.activeMenu = menu; render(); };
+
+    window.toggleAddForm = () => {
+        state.showAddForm = !state.showAddForm;
+        render();
+    };
+
+    window.handleLogin = async (e) => {
+        e.preventDefault();
+        state.errorMsg = '';
+
+        if (state.loginMode === 'member') {
+            // MEMBER LOGIN: Cek stempel berdasarkan nomor HP atau ID member
+            if (!state.loginInput.trim()) {
+                state.errorMsg = 'Masukkan nomor handphone atau ID member!';
+                render();
+                return;
+            }
+
+            // Cari user berdasarkan nomor HP atau ID dari state.users
+            // (data sudah di-load saat init)
+            const inputPhone = state.loginInput.toString(); // Pastikan nomor HP tetap string dengan leading zero
+            const user = state.users.find(u => 
+                u.phone.toString() === inputPhone || 
+                u.id === inputPhone
+            );
+
+            if (!user) {
+                state.errorMsg = 'Member tidak ditemukan! Periksa nomor HP atau ID Anda.';
+                render();
+                return;
+            }
+
+            state.currentUser = user;
+            state.loginInput = '';
+            state.errorMsg = '';
+            render();
+        } else if (state.loginMode === 'admin') {
+            // ADMIN LOGIN: Kelola data member
+            if (state.loginInput === 'admin123') { // Ganti dengan password admin yang sebenarnya
+                state.currentUser = 'ADMIN';
+                const result = await apiCall('getUsers');
+                if (result.success) {
+                    state.users = result.users || [];
+                }
+                state.loginInput = '';
+                state.errorMsg = '';
+                render();
+            } else {
+                state.errorMsg = 'Password admin salah!';
+                render();
+            }
+        }
+    };
+
+    window.handleLogout = () => {
+        state.currentUser = null;
+        state.loginInput = '';
+        state.errorMsg = '';
+        state.showAddForm = false;
+        render();
+    };
+
+    window.handleAddMember = async (e) => {
+        e.preventDefault();
+        if (!state.newMemberName.trim() || !state.newMemberPhone.trim()) {
+            alert('Nama dan nomor HP harus diisi!');
+            return;
+        }
+        const result = await apiCall('addMember', { 
+            name: state.newMemberName, 
+            phone: state.newMemberPhone 
+        });
+        if (result.success) {
+            state.users.push(result.user);
+            state.newMemberName = '';
+            state.newMemberPhone = '';
+            state.showAddForm = false;
+            render();
+        } else {
+            alert(result.message);
+        }
+    };
+
+    window.updateStamps = async (id, change) => {
+        const result = await apiCall('updateStamps', { id, change });
+        if (result.success) {
+            const user = state.users.find(u => u.id === id);
+            if (user) {
+                user.stamps = Math.max(0, user.stamps + change);
+                // Tambah ke riwayat
+                if (!user.history) user.history = [];
+                user.history.push({
+                    date: new Date().toLocaleDateString('id-ID', { 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }),
+                    change: change,
+                    total: user.stamps
+                });
+            }
+            render();
+        }
+    };
+
+    window.addStampDirect = (id, amount) => {
+        const user = state.users.find(u => u.id == id || u.id === id);
+        state.confirmInline = { userId: id, change: amount, userName: user ? user.name : '' };
+        state.showStampMenu = false;
+        render();
+    };
+
+    window.subtractStampDirect = (id, amount) => {
+        const user = state.users.find(u => u.id == id || u.id === id);
+        state.confirmInline = { userId: id, change: -amount, userName: user ? user.name : '' };
+        state.showStampMenu = false;
+        render();
+    };
+
+    window.confirmStampAction = async () => {
+        const { userId, change } = state.confirmInline || state.confirmModal || {};
+        state.confirmInline = null;
+        state.confirmModal = null;
+        await updateStamps(userId, change);
+        state.stampChangeAmount = 1;
+    };
+
+    window.cancelStampAction = () => {
+        state.confirmInline = null;
+        state.confirmModal = null;
+        state.stampChangeAmount = 1;
+        render();
+    };
+
+    /* ==========================================
+       RENDER UI
+       ========================================== */
+    function renderLoginView() {
+        return `
+        <div class="flex-1 flex flex-col items-center justify-center p-5 bg-slate-900 min-h-screen">
+            <div class="w-full">
+                <div class="text-center mb-10">
+                    <div class="flex items-center justify-center gap-3 mb-4">
+                        <div class="bg-green-600 p-3 rounded-xl shadow-lg"><i data-lucide="zap" class="w-8 h-8 text-white"></i></div>
+                        <h1 class="text-3xl font-black text-green-400">Z-TRONIK</h1>
+                    </div>
+                    <p class="text-slate-400 text-sm">Sistem Loyalitas Pelanggan</p>
+                </div>
+
+                <div class="flex gap-2 mb-6 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                    <button onclick="setLoginMode('member')" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all ${state.loginMode === 'member' ? 'bg-green-600 text-white shadow' : 'text-slate-400'}">
+                        <i data-lucide="user" class="w-4 h-4 inline mr-1"></i>Member
+                    </button>
+                    <button onclick="setLoginMode('admin')" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all ${state.loginMode === 'admin' ? 'bg-green-700 text-white shadow' : 'text-slate-400'}">
+                        <i data-lucide="shield" class="w-4 h-4 inline mr-1"></i>Admin
+                    </button>
+                </div>
+
+                <form onsubmit="handleLogin(event)" class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl">
+                    ${state.loginMode === 'member' ? `
+                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                            <i data-lucide="phone" class="w-4 h-4 inline mr-1"></i>Nomor HP atau ID Member
+                        </label>
+                        <input type="text" placeholder="Contoh: 08123456789"
+                            class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white mb-5 focus:ring-2 focus:ring-green-500 focus:outline-none placeholder-slate-500"
+                            value="${state.loginInput}" oninput="handleLoginInput(this.value)" />
+                        <button type="submit" class="w-full bg-green-600 hover:bg-green-500 py-3 rounded-xl font-bold text-white transition-all shadow">
+                            Cek Stempel Saya
+                        </button>
+                    ` : `
+                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                            <i data-lucide="lock" class="w-4 h-4 inline mr-1"></i>Password Admin
+                        </label>
+                        <input type="password" placeholder="Masukkan password"
+                            class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white mb-5 focus:ring-2 focus:ring-green-600 focus:outline-none placeholder-slate-500"
+                            value="${state.loginInput}" oninput="handleLoginInput(this.value)" />
+                        <button type="submit" class="w-full bg-green-700 hover:bg-green-600 py-3 rounded-xl font-bold text-white transition-all shadow">
+                            Masuk Admin
+                        </button>
+                    `}
+                </form>
+
+                ${state.errorMsg ? `
+                <div class="mt-4 bg-red-900/40 border border-red-700 rounded-xl p-4 flex items-start gap-3">
+                    <i data-lucide="alert-circle" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"></i>
+                    <p class="text-red-300 text-sm">${state.errorMsg}</p>
+                </div>` : ''}
+
+                <div class="mt-5 bg-green-900/30 border border-green-800 rounded-xl p-4 text-sm text-green-300">
+                    ${state.loginMode === 'member' ? `
+                        <p><i data-lucide="info" class="w-4 h-4 inline mr-1"></i><strong>Member:</strong> Masukkan nomor HP atau ID member untuk cek stempel Anda.</p>
+                    ` : `
+                        <p><i data-lucide="info" class="w-4 h-4 inline mr-1"></i><strong>Admin:</strong> Kelola member, tambah/kurangi stempel, dan atur kolom stempel.</p>
+                    `}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function renderMemberView() {
+        const user = state.currentUser;
+        const maxStamps = state.maxStamps;
+        const currentProgress = user.stamps % maxStamps;
+        const completedCards = Math.floor(user.stamps / maxStamps);
+        const menu = state.activeMenu || 'stamps';
+        
+        let stampGridHTML = '';
+        for (let i = 0; i < maxStamps; i++) {
+            const showStamp = i < currentProgress;
+            const classes = showStamp 
+                ? 'border-green-500 bg-green-500/20 shadow-sm shadow-green-500/20'
+                : 'border-slate-600 bg-slate-800';
+            const content = showStamp 
+                ? `<i data-lucide="zap" class="w-5 h-5 text-green-400"></i>`
+                : `<span class="text-slate-600 font-bold text-xs">${i + 1}</span>`;
+            stampGridHTML += `<div class="aspect-square rounded-full flex items-center justify-center border-2 transition-all duration-300 ${classes}">${content}</div>`;
+        }
+
+        // Riwayat HTML — teks jelas di atas latar gelap
+        let historyHTML = '';
+        if (user.history && user.history.length > 0) {
+            historyHTML = user.history.slice().reverse().map(entry => `
+                <div class="flex items-center justify-between bg-slate-700 p-3 rounded-xl border border-slate-600">
+                    <div>
+                        <p class="text-sm text-white font-semibold">${entry.date}</p>
+                        <p class="text-xs text-slate-300 mt-0.5">Total stempel: <span class="font-bold text-green-400">${entry.total}</span></p>
+                    </div>
+                    <span class="px-3 py-1.5 rounded-lg text-sm font-bold min-w-[48px] text-center ${entry.change > 0 ? 'bg-green-500/20 text-green-300 border border-green-500/40' : 'bg-red-500/20 text-red-300 border border-red-500/40'}">
+                        ${entry.change > 0 ? '+' : ''}${entry.change}
+                    </span>
+                </div>
+            `).join('');
+        } else {
+            historyHTML = '<p class="text-center text-slate-400 text-sm py-8">Belum ada riwayat stempel</p>';
+        }
+
+        const tabs = [
+            { id: 'stamps', label: 'Stempel', icon: 'grid-3x3' },
+            { id: 'rewards', label: 'Reward', icon: 'gift' },
+            { id: 'history', label: 'Riwayat', icon: 'history' },
+            { id: 'qr', label: 'QR Code', icon: 'qr-code' },
+        ];
+
+        let tabContent = '';
+        if (menu === 'stamps') {
+            tabContent = `
+            <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700 shadow-sm">
+                <div class="text-center mb-5">
+                    <h3 class="text-base font-bold text-white">Kartu Stempel</h3>
+                    <p class="text-sm text-slate-400">Kumpulkan ${maxStamps} stempel untuk reward!</p>
+                </div>
+                <div class="grid grid-cols-5 gap-2">${stampGridHTML}</div>
+                ${(currentProgress === 0 && user.stamps > 0) ? `
+                <div class="mt-5 flex items-center justify-center gap-2 text-green-300 bg-green-500/10 p-3 rounded-xl border border-green-500/30">
+                    <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+                    <span class="font-medium text-sm">Kartu penuh! Tukarkan reward.</span>
+                </div>` : ''}
+            </div>`;
+        } else if (menu === 'rewards') {
+            tabContent = `
+            <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700 shadow-sm">
+                <h3 class="text-base font-bold text-white mb-4 flex items-center gap-2">
+                    <i data-lucide="gift" class="w-5 h-5 text-yellow-400"></i>Reward Pencapaian
+                </h3>
+                <div class="space-y-3">
+                    ${state.rewards.map(r => {
+                        const reached = user.stamps >= r.stamps;
+                        return `
+                        <div class="flex items-center gap-4 p-3 rounded-xl border ${reached ? 'border-yellow-500/40 bg-yellow-500/10' : 'border-slate-600 bg-slate-700/50'}">
+                            <div class="p-2 rounded-lg ${reached ? 'bg-yellow-500/20 text-yellow-400' : 'bg-slate-600 text-slate-400'}">
+                                <i data-lucide="${r.icon}" class="w-5 h-5"></i>
+                            </div>
+                            <div class="flex-1">
+                                <p class="font-semibold text-sm ${reached ? 'text-yellow-300' : 'text-slate-300'}">${r.label}</p>
+                                <p class="text-xs ${reached ? 'text-yellow-500' : 'text-slate-500'}">${r.stamps} stempel</p>
+                            </div>
+                            ${reached ? '<span class="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 px-2 py-1 rounded-full font-bold">Tercapai ✓</span>' : `<span class="text-xs text-slate-500">${r.stamps - user.stamps} lagi</span>`}
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+        } else if (menu === 'history') {
+            tabContent = `
+            <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700 shadow-sm">
+                <h3 class="text-base font-bold text-white mb-4 flex items-center gap-2">
+                    <i data-lucide="history" class="w-5 h-5 text-green-400"></i>Riwayat Stempel
+                </h3>
+                <div class="space-y-2">${historyHTML}</div>
+            </div>`;
+        } else if (menu === 'qr') {
+            tabContent = `
+            <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700 shadow-sm text-center">
+                <h3 class="text-base font-bold text-white mb-1 flex items-center justify-center gap-2">
+                    <i data-lucide="qr-code" class="w-5 h-5 text-green-400"></i>QR Code Member
+                </h3>
+                <p class="text-xs text-slate-400 mb-4">Tunjukkan ke admin untuk menambah stempel</p>
+                <div class="flex flex-col items-center gap-2">
+                    <div id="qrcode" class="p-3 bg-slate-900 rounded-xl border border-slate-600 inline-block"></div>
+                    <p class="text-xs text-slate-400">${user.phone}</p>
+                </div>
+            </div>`;
+        }
+
+        return `
+        <div class="flex-1 flex flex-col bg-slate-900">
+            <!-- Header -->
+            <div class="bg-slate-800 border-b border-slate-700 px-4 py-3 flex justify-between items-center sticky top-0 z-10">
+                <div class="flex items-center space-x-3">
+                    <div class="bg-green-600 p-2 rounded-lg"><i data-lucide="zap" class="w-5 h-5 text-white"></i></div>
+                    <div>
+                        <h1 class="text-base font-bold text-green-400">Z-TRONIK</h1>
+                        <p class="text-xs text-slate-400">ID: ${user.id}</p>
+                    </div>
+                </div>
+                <button onclick="handleLogout()" class="text-slate-500 hover:text-red-400 p-2"><i data-lucide="log-out" class="w-5 h-5"></i></button>
+            </div>
+
+            <!-- Info Card -->
+            <div class="bg-green-800 text-white px-5 py-5">
+                <h2 class="text-xl font-bold mb-0.5">Halo, ${user.name}!</h2>
+                <p class="text-green-300 text-sm mb-4">${user.phone}</p>
+                <div class="flex items-center justify-between bg-black/20 p-3 rounded-xl border border-white/10">
+                    <div>
+                        <p class="text-xs text-green-300">Total Stempel</p>
+                        <p class="text-3xl font-black text-white">${user.stamps}</p>
+                    </div>
+                    ${completedCards > 0 ? `
+                    <div class="text-right">
+                        <p class="text-xs text-green-300">Reward Tersedia</p>
+                        <p class="text-xl font-bold text-yellow-300 flex items-center gap-1 justify-end">${completedCards} <i data-lucide="award" class="w-5 h-5"></i></p>
+                    </div>` : ''}
+                </div>
+            </div>
+
+            <!-- Tab Nav -->
+            <div class="bg-slate-800 border-b border-slate-700 flex">
+                ${tabs.map(t => `
+                <button onclick="setActiveMenu('${t.id}')" class="flex-1 py-3 flex flex-col items-center gap-1 text-xs font-medium transition-all border-b-2 ${menu === t.id ? 'border-green-500 text-green-400' : 'border-transparent text-slate-500'}">
+                    <i data-lucide="${t.icon}" class="w-4 h-4"></i>${t.label}
+                </button>`).join('')}
+            </div>
+
+            <!-- Tab Content -->
+            <div class="flex-1 overflow-y-auto p-4">
+                <div class="pb-6">${tabContent}</div>
+            </div>
+        </div>`;
+    }
+
+    function renderAdminView() {
+        const filtered = state.users.filter(u => 
+            u.name.toLowerCase().includes(state.searchTerm.toLowerCase()) || 
+            u.phone.includes(state.searchTerm)
+        );
+        const ci = state.confirmInline;
+
+        let memberCards = '';
+        if (filtered.length === 0) {
+            memberCards = `<div class="text-center text-slate-500 py-10">Tidak ada member ditemukan.</div>`;
+        } else {
+            filtered.forEach(u => {
+                const isConfirming = ci && ci.userId == u.id;
+                const isAdd = isConfirming && ci.change > 0;
+                // History rows untuk dropdown
+                const historyRows = u.history && u.history.length > 0
+                    ? u.history.slice().reverse().map(entry => `
+                        <div class="flex items-center justify-between bg-slate-700 p-3 rounded-xl border border-slate-600">
+                            <div>
+                                <p class="text-sm text-white font-semibold">${entry.date}</p>
+                                <p class="text-xs text-slate-300 mt-0.5">Total: <span class="font-bold text-green-400">${entry.total}</span> stempel</p>
+                            </div>
+                            <span class="px-3 py-1.5 rounded-lg text-sm font-bold min-w-[48px] text-center ${entry.change > 0 ? 'bg-green-500/20 text-green-300 border border-green-500/40' : 'bg-red-500/20 text-red-300 border border-red-500/40'}">
+                                ${entry.change > 0 ? '+' : ''}${entry.change}
+                            </span>
+                        </div>`).join('')
+                    : '<p class="text-slate-400 text-sm text-center py-4">Belum ada riwayat</p>';
+
+                memberCards += `
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-sm p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <p class="font-bold text-white text-base">${u.name}</p>
+                            <p class="text-xs text-slate-400">${u.phone}</p>
+                        </div>
+                        <span class="bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-1 rounded-full font-bold text-sm">${u.stamps} ✦</span>
+                    </div>
+                    <div class="flex items-center gap-2 mb-3">
+                        ${isConfirming ? `
+                        <div class="flex items-center gap-2 flex-1">
+                            <span class="text-sm font-semibold ${isAdd ? 'text-green-400' : 'text-red-400'}">${isAdd ? 'Tambah' : 'Kurangi'} ${Math.abs(ci.change)} stempel?</span>
+                            <button onclick="confirmStampAction()" class="flex-1 py-2 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-bold transition-colors">Ya</button>
+                            <button onclick="cancelStampAction()" class="flex-1 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-xl text-sm font-bold transition-colors">Tidak</button>
+                        </div>` : `
+                        <button onclick="addStampDirect(${u.id}, state.stampChangeAmount)" class="flex-1 py-2 bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 rounded-xl text-sm font-bold flex items-center justify-center gap-1 transition-colors">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Tambah
+                        </button>
+                        <button onclick="subtractStampDirect(${u.id}, state.stampChangeAmount)" class="flex-1 py-2 bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 rounded-xl text-sm font-bold flex items-center justify-center gap-1 transition-colors">
+                            <i data-lucide="minus" class="w-4 h-4"></i> Kurangi
+                        </button>`}
+                    </div>
+                    <!-- Riwayat accordion -->
+                    <details class="group">
+                        <summary class="w-full py-2 px-3 bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 rounded-xl text-xs font-semibold list-none cursor-pointer flex items-center justify-between transition-colors">
+                            <span class="flex items-center gap-2"><i data-lucide="history" class="w-3.5 h-3.5 text-blue-400"></i>Riwayat Stempel</span>
+                            <i data-lucide="chevron-down" class="w-3.5 h-3.5 group-open:rotate-180 transition-transform"></i>
+                        </summary>
+                        <div class="mt-2 space-y-2 bg-slate-900 rounded-xl border border-slate-700 p-3">
+                            ${historyRows}
+                        </div>
+                    </details>
+                </div>`;
+            });
+        }
+
+        return `
+        <div class="flex-1 flex flex-col bg-slate-900 min-h-screen">
+            <!-- Header Admin -->
+            <div class="bg-slate-800 border-b border-slate-700 px-4 py-3 flex justify-between items-center sticky top-0 z-10">
+                <div class="flex items-center gap-3">
+                    <div class="bg-green-700 p-2 rounded-xl"><i data-lucide="shield" class="w-5 h-5 text-white"></i></div>
+                    <div>
+                        <h1 class="text-base font-bold text-white">Admin Z-TRONIK</h1>
+                        <p class="text-xs text-slate-400">Kelola Member & Stempel</p>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="toggleAddForm()" class="flex items-center gap-1 bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-xl font-medium text-sm transition-colors">
+                        <i data-lucide="${state.showAddForm ? 'x' : 'user-plus'}" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="handleLogout()" class="flex items-center gap-1 bg-slate-700 hover:bg-slate-600 text-red-400 px-3 py-2 rounded-xl text-sm transition-colors">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-4 space-y-4 pb-8">
+
+                ${state.showAddForm ? `
+                <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-sm">
+                    <h2 class="text-sm font-bold mb-3 text-white">Tambah Member Baru</h2>
+                    <form onsubmit="handleAddMember(event)" class="flex flex-col gap-3">
+                        <input type="text" placeholder="Nama Lengkap" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.newMemberName}" oninput="handleNewMemberName(this.value)" />
+                        <input type="tel" placeholder="Nomor Handphone" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.newMemberPhone}" oninput="handleNewMemberPhone(this.value)" />
+                        <button type="submit" class="w-full bg-green-600 hover:bg-green-500 py-2.5 rounded-xl font-bold text-white transition-colors">Simpan Member</button>
+                    </form>
+                </div>` : ''}
+
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-sm p-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-sm font-bold text-white">Jumlah Kolom Stempel</h2>
+                            <p class="text-xs text-slate-400">Per kartu member</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="number" min="5" max="50" value="${state.maxStamps}" oninput="handleMaxStamps(this.value)" class="w-16 bg-slate-900 border border-slate-600 rounded-xl px-2 py-2 text-white text-center font-bold focus:ring-2 focus:ring-green-500 focus:outline-none" />
+                            <span class="text-slate-400 text-xs">kolom</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 p-4 flex items-center justify-between">
+                    <p class="text-xs font-semibold text-slate-300">Stempel per aksi</p>
+                    <input type="number" min="1" max="100" value="${state.stampChangeAmount}" oninput="handleStampChangeAmount(this.value)" class="w-16 bg-slate-900 border border-slate-600 rounded-xl px-2 py-1.5 text-white text-center font-bold text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
+                </div>
+
+                <!-- Reward Pencapaian -->
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-sm overflow-hidden">
+                    <div class="px-4 py-3 border-b border-slate-700 flex items-center gap-2">
+                        <i data-lucide="gift" class="w-4 h-4 text-yellow-400"></i>
+                        <h2 class="text-sm font-bold text-white">Reward Pencapaian</h2>
+                    </div>
+                    <div class="p-3 grid grid-cols-2 gap-2">
+                        ${state.rewards.map(r => `
+                        <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3 text-center">
+                            <div class="bg-yellow-500/20 p-1.5 rounded-lg inline-block mb-1"><i data-lucide="${r.icon}" class="w-4 h-4 text-yellow-400"></i></div>
+                            <p class="text-white font-semibold text-xs">${r.label}</p>
+                            <p class="text-yellow-400 text-xs font-bold">${r.stamps} stempel</p>
+                        </div>`).join('')}
+                    </div>
+                </div>
+
+                <!-- Daftar Member -->
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-sm font-bold text-white">Daftar Member (${state.users.length})</h2>
+                    </div>
+                    <div class="relative mb-3">
+                        <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"></i>
+                        <input type="text" placeholder="Cari nama atau nomor HP..." class="w-full bg-slate-800 border border-slate-600 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.searchTerm}" oninput="handleSearchInput(this.value)" />
+                    </div>
+                    <div class="space-y-3">${memberCards}</div>
+                </div>
+
+            </div>
+        </div>`;
+    }
+
+    function render() {
+        let html;
+        if (!state.currentUser) {
+            html = renderLoginView();
+        } else if (state.currentUser === 'ADMIN') {
+            html = renderAdminView();
+        } else {
+            html = renderMemberView();
+        }
+        document.getElementById('app').innerHTML = html;
+        lucide.createIcons();
+
+        // Render QR Code jika ada elemen #qrcode
+        const qrEl = document.getElementById('qrcode');
+        if (qrEl && state.currentUser && state.currentUser !== 'ADMIN') {
+            qrEl.innerHTML = '';
+            new QRCode(qrEl, {
+                text: state.currentUser.phone,
+                width: 160,
+                height: 160,
+                colorDark: '#22c55e',
+                colorLight: '#0f172a',
+                correctLevel: QRCode.CorrectLevel.H
+            });
+        }
+    }
+
+    // Inisialisasi awal - Load data member dari API
+    async function init() {
+        const result = await apiCall('getUsers');
+        if (result.success) {
+            state.users = result.users || [];
+        } else {
+            // Demo: Tambah beberapa member dummy untuk testing
+            state.users = [
+                { id: 1, name: 'Budi Santoso', phone: '08123456789', stamps: 3 },
+                { id: 2, name: 'Siti Nurhaliza', phone: '08234567890', stamps: 7 },
+                { id: 3, name: 'Ahmad Rahman', phone: '08345678901', stamps: 10 }
+            ];
+        }
+        render();
+    }
+
+    init();
+</script>
+</body>
+</html>
