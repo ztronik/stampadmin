@@ -1368,6 +1368,7 @@
                                         <span class="bg-green-500/20 text-green-400 border border-green-500/30 px-2.5 py-1 rounded-full font-bold text-sm shrink-0">${u.stamps} ✦</span>
                                     </div>
                                     <!-- Stempel row: ➖ | − | input | + | ➕ -->
+                                    <p class="text-xs text-slate-400 font-medium">Tambah / Kurangi Stempel</p>
                                     <div class="flex items-center gap-1.5">
                                         <button onclick="handleStampActionType('${u.id}','sub'); doStampAction('${u.id}')"
                                             title="Kurangi stempel"
@@ -1390,6 +1391,7 @@
                                         </button>
                                     </div>
                                     <!-- Kolom kartu row: ➖ | − | input | + | ➕ -->
+                                    <p class="text-xs text-slate-400 font-medium">Atur Jumlah Kolom Kartu</p>
                                     <div class="flex items-center gap-1.5">
                                         <button onclick="changeColInput('${u.id}', -1); saveMemberStampCols('${u.id}')"
                                             title="Kurangi kolom"
@@ -1808,8 +1810,8 @@
         return `<div class="text-center py-3 text-xs font-medium">
             <span class="text-green-500">&copy;</span>
             <span class="text-slate-500"> ${new Date().getFullYear()} </span>
-            <span class="text-green-400 font-bold">Z</span><span class="text-yellow-400 font-bold">-</span><span class="text-green-400 font-bold">TRONIK</span>
-            <span class="text-slate-500"> &middot; All rights reserved.</span>
+            <span class="text-green-400 font-bold">Z-TRONIK</span>
+            <span class="text-slate-500"> &middot; All Rights Reserved.</span>
         </div>`;
     }
 
