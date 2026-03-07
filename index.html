@@ -152,9 +152,11 @@
     let adminSecondsLeft = 0;
 
     function saveSession() {
+        // Jangan hapus session sebelum init selesai restore
+        if (!state._sessionReady) return;
         try {
             if (state.currentUser === 'ADMIN') {
-                localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, loginAt: adminLastActivity || Date.now(), activeAdminMenu: state.activeAdminMenu }));
+                localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, lastActivity: adminLastActivity || Date.now(), activeAdminMenu: state.activeAdminMenu }));
                 sessionStorage.removeItem(SESSION_KEY);
             } else if (state.currentUser) {
                 sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId: state.currentUser.id, activeMenu: state.activeMenu }));
@@ -176,12 +178,13 @@
             const adminRaw = localStorage.getItem(ADMIN_SESSION_KEY);
             if (adminRaw) {
                 const a = JSON.parse(adminRaw);
-                const elapsed = Date.now() - (a.loginAt || 0);
+                const lastAct = a.lastActivity || a.loginAt || 0;
+                const elapsed = Date.now() - lastAct;
                 if (elapsed < ADMIN_TIMEOUT_MS) {
                     state.currentUser = 'ADMIN';
                     state.activeAdminMenu = a.activeAdminMenu || 'member';
                     stopAdminTimer();
-                    adminLastActivity = Date.now() - elapsed;
+                    adminLastActivity = lastAct;
                     adminSecondsLeft = Math.max(0, Math.ceil((ADMIN_TIMEOUT_MS - elapsed) / 1000));
                     adminTimerInterval = setInterval(() => {
                         const el2 = Date.now() - adminLastActivity;
@@ -231,7 +234,7 @@
             adminLastActivity = Date.now();
             adminSecondsLeft = ADMIN_TIMEOUT_MS / 1000;
             // Perbarui timestamp sesi agar refresh tetap valid
-            try { localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, loginAt: adminLastActivity })); } catch(e) {}
+            try { localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, lastActivity: adminLastActivity, activeAdminMenu: state.activeAdminMenu })); } catch(e) {}
         }
     }
 
@@ -1851,6 +1854,9 @@
 
         // Restore session (admin / member) setelah data selesai dimuat
         restoreSession();
+
+        // Izinkan saveSession berjalan mulai sekarang (setelah session di-restore)
+        state._sessionReady = true;
 
         render();
     }
