@@ -100,6 +100,8 @@
         redeemMemberSearch: '',
         showRedeemQrScanner: false,
         editingStampCol: null,
+        stampMemberPage: 0,
+        rewardPage: 0,
         settingUsername: '',
         settingPassword: '',
         settingConfirm: '',
@@ -152,26 +154,26 @@
     function saveSession() {
         try {
             if (state.currentUser === 'ADMIN') {
-                sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, loginAt: adminLastActivity || Date.now(), activeAdminMenu: state.activeAdminMenu }));
+                localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, loginAt: adminLastActivity || Date.now(), activeAdminMenu: state.activeAdminMenu }));
                 sessionStorage.removeItem(SESSION_KEY);
             } else if (state.currentUser) {
                 sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId: state.currentUser.id, activeMenu: state.activeMenu }));
-                sessionStorage.removeItem(ADMIN_SESSION_KEY);
+                localStorage.removeItem(ADMIN_SESSION_KEY);
             } else {
                 sessionStorage.removeItem(SESSION_KEY);
-                sessionStorage.removeItem(ADMIN_SESSION_KEY);
+                localStorage.removeItem(ADMIN_SESSION_KEY);
             }
         } catch(e) {}
     }
 
     function clearSession() {
-        try { sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(ADMIN_SESSION_KEY); } catch(e) {}
+        try { sessionStorage.removeItem(SESSION_KEY); localStorage.removeItem(ADMIN_SESSION_KEY); } catch(e) {}
     }
 
     function restoreSession() {
         try {
             // Coba restore sesi admin
-            const adminRaw = sessionStorage.getItem(ADMIN_SESSION_KEY);
+            const adminRaw = localStorage.getItem(ADMIN_SESSION_KEY);
             if (adminRaw) {
                 const a = JSON.parse(adminRaw);
                 const elapsed = Date.now() - (a.loginAt || 0);
@@ -229,7 +231,7 @@
             adminLastActivity = Date.now();
             adminSecondsLeft = ADMIN_TIMEOUT_MS / 1000;
             // Perbarui timestamp sesi agar refresh tetap valid
-            try { sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, loginAt: adminLastActivity })); } catch(e) {}
+            try { localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, loginAt: adminLastActivity })); } catch(e) {}
         }
     }
 
@@ -518,6 +520,10 @@
 
     window.adminNextPage = (list) => { state[list + 'Page']++; render(); };
     window.adminPrevPage = (list) => { if (state[list + 'Page'] > 0) state[list + 'Page']--; render(); };
+    window.stampMemberNextPage = () => { state.stampMemberPage++; render(); };
+    window.stampMemberPrevPage = () => { if (state.stampMemberPage > 0) state.stampMemberPage--; render(); };
+    window.rewardNextPage = () => { state.rewardPage++; render(); };
+    window.rewardPrevPage = () => { if (state.rewardPage > 0) state.rewardPage--; render(); };
 
     // Add Member
     window.toggleAddMember = () => { state.showAddMember = !state.showAddMember; state.newMemberName = ''; state.newMemberAddress = ''; state.newMemberPhone = ''; render(); };
@@ -588,8 +594,8 @@
 
     // Stamp actions
     window.handleStampInput = (id, val) => { state.memberStampInputs[id] = Math.max(1, parseInt(val) || 1); };
-    window.handleStampActionType = (id, val) => { state.stampActionType[id] = val; render(); };
-    window.handleStampSearch = (val) => { state.stampSearch = val; render(); };
+    window.handleStampActionType = (id, val) => { state.stampActionType[id] = val; };
+    window.handleStampSearch = (val) => { state.stampSearch = val; state.stampMemberPage = 0; render(); };
 
     // Tombol +/- untuk input stempel (tidak re-render, update DOM langsung)
     window.changeStampInput = (id, delta) => {
@@ -1325,6 +1331,7 @@
                     </div>
                     <div class="divide-y divide-slate-700">
                         ${(() => {
+                            const STAMP_PAGE_SIZE = 5;
                             const q = (state.stampSearch || '').toLowerCase();
                             const visibleUsers = q
                                 ? state.users.filter(u =>
@@ -1333,79 +1340,78 @@
                                     (u.id || '').toString().includes(q))
                                 : state.users;
                             if (visibleUsers.length === 0) return '<p class="text-slate-500 text-sm text-center p-6">Tidak ada member ditemukan.</p>';
-                            return visibleUsers.map(u => {
+                            const totalStampPages = Math.ceil(visibleUsers.length / STAMP_PAGE_SIZE);
+                            const stampPage = Math.min(state.stampMemberPage || 0, Math.max(0, totalStampPages - 1));
+                            const pagedUsers = visibleUsers.slice(stampPage * STAMP_PAGE_SIZE, stampPage * STAMP_PAGE_SIZE + STAMP_PAGE_SIZE);
+                            const paginationHtml = totalStampPages > 1 ? `
+                                <div class="flex items-center justify-between px-4 py-2 border-t border-slate-700">
+                                    <button onclick="stampMemberPrevPage()" ${stampPage === 0 ? 'disabled' : ''} class="py-1.5 px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-colors">← Prev</button>
+                                    <span class="text-slate-400 text-xs">${stampPage + 1} / ${totalStampPages}</span>
+                                    <button onclick="stampMemberNextPage()" ${stampPage >= totalStampPages - 1 ? 'disabled' : ''} class="py-1.5 px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-colors">Next →</button>
+                                </div>` : '';
+                            const cardsHtml = pagedUsers.map(u => {
                                 const stampInput = state.memberStampInputs[u.id] !== undefined ? state.memberStampInputs[u.id] : 1;
                                 const colVal     = u.maxStamps || state.maxStamps;
                                 const colInput   = state.memberStampCols[u.id] !== undefined ? state.memberStampCols[u.id] : colVal;
+                                const isAdd      = (state.stampActionType[u.id]||'add') === 'add';
                                 return `
-                                <div class="px-4 py-3 space-y-3">
+                                <div class="px-3 py-3 space-y-2">
                                     <!-- Info member -->
                                     <div class="flex items-start justify-between gap-2">
                                         <div class="flex-1 min-w-0">
-                                            <p class="font-bold text-white text-sm">${u.name}</p>
-                                            <p class="text-xs text-slate-400"><i data-lucide="phone" class="w-3 h-3 inline mr-1"></i>${u.phone}</p>
-                                            ${u.address ? `<p class="text-xs text-slate-400"><i data-lucide="map-pin" class="w-3 h-3 inline mr-1"></i>${u.address}</p>` : ''}
-                                            <p class="text-xs text-slate-600 font-mono"><i data-lucide="hash" class="w-3 h-3 inline mr-1"></i>${u.id}</p>
+                                            <p class="font-bold text-white text-sm truncate">${u.name}</p>
+                                            <p class="text-xs text-slate-500 truncate"><i data-lucide="phone" class="w-3 h-3 inline mr-0.5"></i>${u.phone}${u.address ? ' · ' + u.address : ''}</p>
+                                            <p class="text-xs text-slate-600 font-mono"><i data-lucide="hash" class="w-3 h-3 inline mr-0.5"></i>${u.id}</p>
                                         </div>
                                         <span class="bg-green-500/20 text-green-400 border border-green-500/30 px-2.5 py-1 rounded-full font-bold text-sm shrink-0">${u.stamps} ✦</span>
                                     </div>
-
-                                    <!-- Baris Stempel: label | - | input | + | OK -->
-                                    <div class="bg-slate-900/60 rounded-xl p-2 space-y-1.5">
-                                        <p class="text-xs text-slate-500 font-semibold uppercase tracking-wide px-1">Stempel</p>
-                                        <div class="flex items-center gap-2">
-                                            <button onclick="changeStampInput('${u.id}', -1)"
-                                                class="w-9 h-9 flex items-center justify-center bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/25 rounded-xl transition-colors shrink-0">
-                                                <i data-lucide="minus" class="w-4 h-4"></i>
-                                            </button>
-                                            <input id="stampInput_${u.id}" type="number" min="1" max="999" value="${stampInput}"
-                                                oninput="handleStampInput('${u.id}', this.value)"
-                                                class="flex-1 bg-slate-900 border border-slate-600 rounded-xl px-2 py-2 text-white text-center font-bold text-base focus:ring-2 focus:ring-green-500 focus:outline-none" />
-                                            <button onclick="changeStampInput('${u.id}', 1)"
-                                                class="w-9 h-9 flex items-center justify-center bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/25 rounded-xl transition-colors shrink-0">
-                                                <i data-lucide="plus" class="w-4 h-4"></i>
-                                            </button>
-                                            <button onclick="doStampAction('${u.id}')"
-                                                class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-xl text-xs font-bold transition-colors shrink-0">
-                                                OK
-                                            </button>
-                                        </div>
-                                        <!-- Toggle tambah/kurangi -->
-                                        <div class="flex gap-2 px-1">
-                                            <button onclick="handleStampActionType('${u.id}','add')"
-                                                class="flex-1 py-1 rounded-lg text-xs font-semibold transition-colors ${(state.stampActionType[u.id]||'add')==='add' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}">
-                                                <i data-lucide="plus-circle" class="w-3 h-3 inline mr-1"></i>Tambah
-                                            </button>
-                                            <button onclick="handleStampActionType('${u.id}','sub')"
-                                                class="flex-1 py-1 rounded-lg text-xs font-semibold transition-colors ${(state.stampActionType[u.id]||'add')==='sub' ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}">
-                                                <i data-lucide="minus-circle" class="w-3 h-3 inline mr-1"></i>Kurangi
-                                            </button>
-                                        </div>
+                                    <!-- Stempel row: ➖ | − | input | + | ➕ -->
+                                    <div class="flex items-center gap-1.5">
+                                        <button onclick="handleStampActionType('${u.id}','sub'); doStampAction('${u.id}')"
+                                            title="Kurangi stempel"
+                                            class="shrink-0 w-8 h-8 flex items-center justify-center bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/25 rounded-lg transition-colors">
+                                            <i data-lucide="minus-circle" class="w-4 h-4"></i>
+                                        </button>
+                                        <button onclick="changeStampInput('${u.id}', -1)" class="shrink-0 w-6 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors">
+                                            <i data-lucide="minus" class="w-3 h-3"></i>
+                                        </button>
+                                        <input id="stampInput_${u.id}" type="number" min="1" max="999" value="${stampInput}"
+                                            oninput="handleStampInput('${u.id}', this.value)"
+                                            class="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-1 py-1.5 text-white text-center font-bold text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
+                                        <button onclick="changeStampInput('${u.id}', 1)" class="shrink-0 w-6 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors">
+                                            <i data-lucide="plus" class="w-3 h-3"></i>
+                                        </button>
+                                        <button onclick="handleStampActionType('${u.id}','add'); doStampAction('${u.id}')"
+                                            title="Tambah stempel"
+                                            class="shrink-0 w-8 h-8 flex items-center justify-center bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/25 rounded-lg transition-colors">
+                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                                        </button>
                                     </div>
-
-                                    <!-- Baris Kolom: label | - | nilai | + | OK -->
-                                    <div class="bg-slate-900/60 rounded-xl p-2 space-y-1.5">
-                                        <p class="text-xs text-slate-500 font-semibold uppercase tracking-wide px-1">Kolom Kartu</p>
-                                        <div class="flex items-center gap-2">
-                                            <button onclick="changeColInput('${u.id}', -1)"
-                                                class="w-9 h-9 flex items-center justify-center bg-slate-700 text-slate-300 border border-slate-600 hover:bg-slate-600 rounded-xl transition-colors shrink-0">
-                                                <i data-lucide="minus" class="w-4 h-4"></i>
-                                            </button>
-                                            <input id="colInput_${u.id}" type="number" min="1" max="100" value="${colInput}"
-                                                oninput="handleMemberStampCols('${u.id}', this.value)"
-                                                class="flex-1 bg-slate-900 border border-slate-600 rounded-xl px-2 py-2 text-blue-400 text-center font-bold text-base focus:ring-2 focus:ring-blue-500 focus:outline-none" />
-                                            <button onclick="changeColInput('${u.id}', 1)"
-                                                class="w-9 h-9 flex items-center justify-center bg-slate-700 text-slate-300 border border-slate-600 hover:bg-slate-600 rounded-xl transition-colors shrink-0">
-                                                <i data-lucide="plus" class="w-4 h-4"></i>
-                                            </button>
-                                            <button onclick="saveMemberStampCols('${u.id}')"
-                                                class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-colors shrink-0">
-                                                OK
-                                            </button>
-                                        </div>
+                                    <!-- Kolom kartu row: ➖ | − | input | + | ➕ -->
+                                    <div class="flex items-center gap-1.5">
+                                        <button onclick="changeColInput('${u.id}', -1); saveMemberStampCols('${u.id}')"
+                                            title="Kurangi kolom"
+                                            class="shrink-0 w-8 h-8 flex items-center justify-center bg-slate-600/50 text-slate-300 border border-slate-600 hover:bg-slate-600 rounded-lg transition-colors">
+                                            <i data-lucide="minus-circle" class="w-4 h-4"></i>
+                                        </button>
+                                        <button onclick="changeColInput('${u.id}', -1)" class="shrink-0 w-6 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors">
+                                            <i data-lucide="minus" class="w-3 h-3"></i>
+                                        </button>
+                                        <input id="colInput_${u.id}" type="number" min="1" max="100" value="${colInput}"
+                                            oninput="handleMemberStampCols('${u.id}', this.value)"
+                                            class="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-1 py-1.5 text-blue-400 text-center font-bold text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                                        <button onclick="changeColInput('${u.id}', 1)" class="shrink-0 w-6 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors">
+                                            <i data-lucide="plus" class="w-3 h-3"></i>
+                                        </button>
+                                        <button onclick="changeColInput('${u.id}', 1); saveMemberStampCols('${u.id}')"
+                                            title="Tambah kolom"
+                                            class="shrink-0 w-8 h-8 flex items-center justify-center bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/25 rounded-lg transition-colors">
+                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                                        </button>
                                     </div>
                                 </div>`;
                             }).join('');
+                            return cardsHtml + paginationHtml;
                         })()}
                     </div>
                 </div>
@@ -1569,10 +1575,15 @@
                 </div>` : ''}
 
                 <div class="space-y-3">
-                    ${state.rewards.length === 0 ? '<p class="text-center text-slate-500 py-8">Belum ada reward.</p>' :
-                        state.rewards.map(r => {
+                    ${(() => {
+                        if (state.rewards.length === 0) return '<p class="text-center text-slate-500 py-8">Belum ada reward.</p>';
+                        const RWD_PAGE = 5;
+                        const totalRwdPages = Math.ceil(state.rewards.length / RWD_PAGE);
+                        const rwdPage = Math.min(state.rewardPage || 0, Math.max(0, totalRwdPages - 1));
+                        const pagedRewards = state.rewards.slice(rwdPage * RWD_PAGE, rwdPage * RWD_PAGE + RWD_PAGE);
+                        const iconOptions2 = ['gift', 'tag', 'percent', 'wrench', 'star', 'award', 'zap', 'heart', 'coffee', 'shopping-bag'];
+                        const cards = pagedRewards.map(r => {
                             const isEditing = state.editReward && state.editReward.id == r.id;
-                            const iconOptions2 = ['gift', 'tag', 'percent', 'wrench', 'star', 'award', 'zap', 'heart', 'coffee', 'shopping-bag'];
                             return `
                             <div class="bg-slate-800 rounded-2xl border border-slate-700 p-4">
                                 ${isEditing ? `
@@ -1604,15 +1615,22 @@
                                     </div>
                                 </div>`}
                             </div>`;
-                        }).join('')
-                    }
+                        }).join('');
+                        const pagination = totalRwdPages > 1 ? `
+                        <div class="flex items-center justify-between pt-1">
+                            <button onclick="rewardPrevPage()" ${rwdPage === 0 ? 'disabled' : ''} class="py-2 px-4 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl text-sm font-bold transition-colors">← Prev</button>
+                            <span class="text-slate-400 text-sm">${rwdPage + 1} / ${totalRwdPages}</span>
+                            <button onclick="rewardNextPage()" ${rwdPage >= totalRwdPages - 1 ? 'disabled' : ''} class="py-2 px-4 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl text-sm font-bold transition-colors">Next →</button>
+                        </div>` : '';
+                        return cards + pagination;
+                    })()}
                 </div>
             </div>`;
         }
 
         // ---- MENU HISTORY ----
         else if (menu === 'history') {
-            const PAGE_SIZE = 10;
+            const PAGE_SIZE = 5;
             let allHistory = getGlobalHistory();
 
             if (state.adminHistorySearch) {
