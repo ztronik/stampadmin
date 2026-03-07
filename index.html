@@ -152,8 +152,6 @@
     let adminSecondsLeft = 0;
 
     function saveSession() {
-        // Jangan hapus session sebelum init selesai restore
-        if (!state._sessionReady) return;
         try {
             if (state.currentUser === 'ADMIN') {
                 localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ isAdmin: true, lastActivity: adminLastActivity || Date.now(), activeAdminMenu: state.activeAdminMenu }));
@@ -513,6 +511,7 @@
         state.activeAdminMenu = menu;
         state.adminMemberPage = 0;
         state.adminHistoryPage = 0;
+        saveSession();
         render();
     };
 
@@ -1802,9 +1801,6 @@
                 try { el.setSelectionRange(selStart, selEnd); } catch(e) {}
             }
         }
-
-        // Simpan sesi ke sessionStorage setiap render
-        saveSession();
     }
 
     // ===================== COPYRIGHT HTML =====================
@@ -1819,7 +1815,10 @@
 
     // ===================== INIT =====================
     async function init() {
-        // Render login langsung tanpa loading
+        // Restore session DULU sebelum apapun, agar localStorage tidak terhapus
+        restoreSession();
+
+        // Render awal (tampilkan halaman sesuai session yang di-restore)
         render();
 
         // Load data di background
@@ -1851,12 +1850,6 @@
 
         // Aktifkan loading overlay untuk aksi berikutnya
         state._appReady = true;
-
-        // Restore session (admin / member) setelah data selesai dimuat
-        restoreSession();
-
-        // Izinkan saveSession berjalan mulai sekarang (setelah session di-restore)
-        state._sessionReady = true;
 
         render();
     }
