@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Z-TRONIK - Loyalty System</title>
+    <title>Z-TRONIK - Admin Panel</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -56,7 +56,7 @@
     let state = {
         users: [],
         currentUser: null,
-        loginMode: 'member',
+        loginMode: 'admin',
         loginInput: '',
         showPassword: false,
         loginUsername: '',
@@ -101,14 +101,24 @@
         showRedeemQrScanner: false,
         editingStampCol: null,
         stampMemberPage: 0,
+        stampSort: 'default',
         rewardPage: 0,
+        rewardSort: 'default',
         settingUsername: '',
         settingPassword: '',
         settingConfirm: '',
         settingMsg: '',
+        faqPage: 0,
+        faqOpenId: null,
     };
 
     // ===================== UTILITIES =====================
+    function normalizePhone(val) {
+        let digits = val.replace(/\D/g, '');
+        if (!digits.startsWith('0')) digits = '0' + digits;
+        return digits.slice(0, 14);
+    }
+
     function showLoading(show) {
         // Jangan tampilkan loading overlay saat init awal (sebelum render pertama)
         if (!state._appReady) return;
@@ -377,16 +387,17 @@
                 if (action === 'getUsers') {
                     resolve({ success: true, users: state.users });
                 } else if (action === 'addMember') {
-                    const exists = state.users.find(u => u.phone === payload.phone);
+                    const normalizedPhone = payload.phone ? normalizePhone(payload.phone.toString()) : '';
+                    const exists = state.users.find(u => normalizePhone(u.phone) === normalizedPhone);
                     if (exists) resolve({ success: false, message: 'Nomor HP sudah terdaftar!' });
                     else {
-                        const newUser = { id: generateMemberId(), name: payload.name, address: payload.address || '', phone: payload.phone, stamps: 0, maxStamps: 0, history: [], createdAt: Date.now() };
+                        const newUser = { id: generateMemberId(), name: payload.name, address: payload.address || '', phone: normalizedPhone, stamps: 0, maxStamps: 0, history: [], createdAt: Date.now() };
                         state.users.push(newUser);
                         resolve({ success: true, user: newUser });
                     }
                 } else if (action === 'editMember') {
                     const u = state.users.find(u => u.id == payload.id);
-                    if (u) { u.name = payload.name; u.address = payload.address; u.phone = payload.phone; }
+                    if (u) { u.name = payload.name; u.address = payload.address; u.phone = payload.phone ? normalizePhone(payload.phone.toString()) : u.phone; }
                     resolve({ success: true });
                 } else if (action === 'deleteMember') {
                     state.users = state.users.filter(u => u.id != payload.id);
@@ -396,7 +407,7 @@
                     if (u) {
                         u.stamps = Math.max(0, u.stamps + payload.change);
                         if (!u.history) u.history = [];
-                        u.history.push({ date: now(), ts: Date.now(), change: payload.change, total: u.stamps });
+                        u.history.push({ date: now(), ts: Date.now(), change: payload.change, total: u.stamps, note: payload.note || '' });
                         pruneOldHistory();
                     }
                     resolve({ success: true });
@@ -439,7 +450,7 @@
     window.setLoginMode = (mode) => { state.loginMode = mode; state.errorMsg = ''; state.loginInput = ''; state.loginUsername = ''; render(); };
     window.handleLoginInput = (val, el) => {
         if (state.loginMode === 'member') {
-            const clean = val.replace(/\D/g, '').slice(0, 13);
+            const clean = normalizePhone(val);
             state.loginInput = clean;
             if (el && el.value !== clean) el.value = clean;
         } else {
@@ -455,7 +466,8 @@
         if (state.loginMode === 'member') {
             if (!state.loginInput.trim()) { state.errorMsg = 'Masukkan nomor handphone atau ID member!'; render(); return; }
             const inputVal = state.loginInput.toString();
-            const user = state.users.find(u => u.phone.toString() === inputVal || u.id === inputVal);
+            const inputNorm = normalizePhone(inputVal);
+            const user = state.users.find(u => normalizePhone(u.phone) === inputNorm || normalizePhone(u.phone) === inputVal || u.id === inputVal);
             if (!user) { state.errorMsg = 'Member tidak ditemukan! Periksa nomor HP atau ID Anda.'; render(); return; }
             state.currentUser = user;
             state.loginInput = '';
@@ -524,15 +536,21 @@
     window.adminPrevPage = (list) => { if (state[list + 'Page'] > 0) state[list + 'Page']--; render(); };
     window.stampMemberNextPage = () => { state.stampMemberPage++; render(); };
     window.stampMemberPrevPage = () => { if (state.stampMemberPage > 0) state.stampMemberPage--; render(); };
+    window.handleStampSort = (val) => { state.stampSort = val; state.stampMemberPage = 0; render(); };
     window.rewardNextPage = () => { state.rewardPage++; render(); };
     window.rewardPrevPage = () => { if (state.rewardPage > 0) state.rewardPage--; render(); };
+    window.handleRewardSort = (val) => { state.rewardSort = val; state.rewardPage = 0; render(); };
+
+    window.toggleFaq = (id) => { state.faqOpenId = state.faqOpenId === id ? null : id; render(); };
+    window.faqNextPage = () => { state.faqPage++; state.faqOpenId = null; render(); };
+    window.faqPrevPage = () => { if (state.faqPage > 0) { state.faqPage--; state.faqOpenId = null; render(); } };
 
     // Add Member
     window.toggleAddMember = () => { state.showAddMember = !state.showAddMember; state.newMemberName = ''; state.newMemberAddress = ''; state.newMemberPhone = ''; render(); };
     window.handleNewMemberName = (val) => { state.newMemberName = val; };
     window.handleNewMemberAddress = (val) => { state.newMemberAddress = val; };
     window.handleNewMemberPhone = (val, el) => {
-        const clean = val.replace(/\D/g, '').slice(0, 13);
+        const clean = normalizePhone(val);
         state.newMemberPhone = clean;
         if (el && el.value !== clean) el.value = clean;
     };
@@ -540,7 +558,7 @@
     window.handleAddMember = async (e) => {
         e.preventDefault();
         if (!state.newMemberName.trim()) { alert('Nama harus diisi!'); return; }
-        if (!state.newMemberPhone.trim() || state.newMemberPhone.length < 10) { alert('Nomor HP harus diisi minimal 10 digit angka!'); return; }
+        if (!state.newMemberPhone.trim() || state.newMemberPhone.length < 10) { alert('Nomor HP harus diisi minimal 10 digit dan diawali angka 0!'); return; }
         const result = await apiCall('addMember', { name: state.newMemberName, address: state.newMemberAddress, phone: state.newMemberPhone });
         if (result.success) {
             if (result.user) state.users.push(result.user);
@@ -561,7 +579,7 @@
     window.handleEditAddress = (val) => { if (state.editMember) state.editMember.address = val; };
     window.handleEditPhone = (val, el) => {
         if (state.editMember) {
-            const clean = val.replace(/\D/g, '').slice(0, 13);
+            const clean = normalizePhone(val);
             state.editMember.phone = clean;
             if (el && el.value !== clean) el.value = clean;
         }
@@ -572,7 +590,7 @@
         const em = state.editMember;
         if (!em) return;
         if (!em.name.trim()) { alert('Nama tidak boleh kosong!'); return; }
-        if (!em.phone.trim() || em.phone.length < 10) { alert('Nomor HP harus minimal 10 digit angka!'); return; }
+        if (!em.phone.trim() || em.phone.length < 10) { alert('Nomor HP harus minimal 10 digit dan diawali angka 0!'); return; }
         const result = await apiCall('editMember', { id: em.id, name: em.name, address: em.address, phone: em.phone });
         if (result.success) {
             const u = state.users.find(u => u.id == em.id);
@@ -928,57 +946,39 @@
             <div class="flex-1 flex flex-col items-center justify-center p-5">
                 <div class="w-full">
                     <div class="text-center mb-10">
-                        <div class="flex items-center justify-center gap-2 mb-4">
+                        <div class="flex items-center justify-center gap-3 mb-4">
                             <h1 class="text-3xl font-black text-green-400">Z-TRONIK</h1>
                         </div>
                         <p class="text-slate-400 text-sm">Sistem Loyalitas Pelanggan</p>
-                    </div>
-
-                    <div class="flex gap-2 mb-6 bg-slate-800 p-1 rounded-xl border border-slate-700">
-                        <button onclick="setLoginMode('member')" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all ${state.loginMode === 'member' ? 'bg-green-600 text-white shadow' : 'text-slate-400'}">
-                            <i data-lucide="user" class="w-4 h-4 inline mr-1"></i>Member
-                        </button>
-                        <button onclick="setLoginMode('admin')" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all ${state.loginMode === 'admin' ? 'bg-green-700 text-white shadow' : 'text-slate-400'}">
-                            <i data-lucide="shield" class="w-4 h-4 inline mr-1"></i>Admin
-                        </button>
+                        <div class="flex items-center justify-center gap-2 mt-5">
+                            <i data-lucide="shield" class="w-7 h-7 text-green-400"></i>
+                            <h2 class="text-2xl font-bold text-white">Login Admin</h2>
+                        </div>
                     </div>
 
                     <form onsubmit="handleLogin(event)" autocomplete="off" class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl">
-                        ${state.loginMode === 'member' ? `
-                            <label class="block text-sm font-medium text-slate-300 mb-2">
-                                <i data-lucide="phone" class="w-4 h-4 inline mr-1"></i>Nomor HP atau ID Member
-                            </label>
-                            <input type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Contoh: 8123456789 (Tanpa Angka 0)"
-                                class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white mb-5 focus:ring-2 focus:ring-green-500 focus:outline-none placeholder-slate-500"
-                                value="${state.loginInput}" oninput="handleLoginInput(this.value, this)" maxlength="13" autocomplete="off" />
-                            <button type="submit" class="w-full bg-green-600 hover:bg-green-500 py-3 rounded-xl font-bold text-white transition-all shadow">
-                                Cek Stempel Saya
+                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                            <i data-lucide="user" class="w-4 h-4 inline mr-1"></i>Username Admin
+                        </label>
+                        <input type="text" placeholder="Masukkan username"
+                            class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white mb-3 focus:ring-2 focus:ring-green-600 focus:outline-none placeholder-slate-500"
+                            value="${state.loginUsername}" oninput="handleLoginUsername(this.value)" />
+                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                            <i data-lucide="lock" class="w-4 h-4 inline mr-1"></i>Password Admin
+                        </label>
+                        <div class="relative mb-5">
+                            <input id="adminPasswordInput" type="${state.showPassword ? 'text' : 'password'}" placeholder="Masukkan password"
+                                class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 pr-12 text-white focus:ring-2 focus:ring-green-600 focus:outline-none placeholder-slate-500"
+                                value="${state.loginInput}" oninput="handleLoginInput(this.value, this)" autocomplete="current-password" />
+                            <button type="button" onclick="toggleShowPassword()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors p-1">
+                                <i data-lucide="${state.showPassword ? 'eye-off' : 'eye'}" class="w-5 h-5"></i>
                             </button>
-                        ` : `
-                            <label class="block text-sm font-medium text-slate-300 mb-2">
-                                <i data-lucide="user" class="w-4 h-4 inline mr-1"></i>Username Admin
-                            </label>
-                            <input type="text" placeholder="Masukkan username"
-                                class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white mb-3 focus:ring-2 focus:ring-green-600 focus:outline-none placeholder-slate-500"
-                                value="${state.loginUsername}" oninput="handleLoginUsername(this.value)" />
-                            <label class="block text-sm font-medium text-slate-300 mb-2">
-                                <i data-lucide="lock" class="w-4 h-4 inline mr-1"></i>Password Admin
-                            </label>
-                            <div class="relative mb-5">
-                                <input id="adminPasswordInput" type="${state.showPassword ? 'text' : 'password'}" placeholder="Masukkan password"
-                                    class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 pr-12 text-white focus:ring-2 focus:ring-green-600 focus:outline-none placeholder-slate-500"
-                                    value="${state.loginInput}" oninput="handleLoginInput(this.value, this)" autocomplete="current-password" />
-                                <button type="button" onclick="toggleShowPassword()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors p-1">
-                                    <i data-lucide="${state.showPassword ? 'eye-off' : 'eye'}" class="w-5 h-5"></i>
-                                </button>
-                            </div>
-                            <button type="submit" class="w-full bg-green-700 hover:bg-green-600 py-3 rounded-xl font-bold text-white transition-all shadow">
-                                Masuk Admin
-                            </button>
-                        `}
+                        </div>
+                        <button type="submit" class="w-full bg-green-700 hover:bg-green-600 py-3 rounded-xl font-bold text-white transition-all shadow">
+                            Masuk Admin
+                        </button>
                     </form>
 
-                    ${state.loginMode === 'admin' ? `
                     <p class="mt-4 text-center text-slate-400 text-sm">Lupa username/password? Hubungi developer</p>
                     <p class="text-center mt-1 flex items-center justify-center gap-2">
                         <a href="https://wa.me/6281281225335" target="_blank" class="inline-flex items-center gap-2 text-green-400 font-bold text-lg hover:text-green-300 transition-colors">
@@ -988,7 +988,6 @@
                             0812-8122-5335
                         </a>
                     </p>
-                    ` : ``}
 
                     ${state.errorMsg ? `
                     <div class="mt-4 bg-red-900/40 border border-red-700 rounded-xl p-4 flex items-start gap-3">
@@ -997,11 +996,7 @@
                     </div>` : ''}
 
                     <div class="mt-5 bg-green-900/30 border border-green-800 rounded-xl p-4 text-sm text-green-300">
-                        ${state.loginMode === 'member' ? `
-                            <p><i data-lucide="info" class="w-4 h-4 inline mr-1"></i><strong>Member:</strong> Masukkan nomor HP atau ID member untuk cek stempel Anda.</p>
-                        ` : `
-                            <p><i data-lucide="info" class="w-4 h-4 inline mr-1"></i><strong>Admin:</strong> Kelola member, tambah/kurangi stempel, dan atur reward.</p>
-                        `}
+                        <p><i data-lucide="info" class="w-4 h-4 inline mr-1"></i><strong>Admin:</strong> Kelola member, tambah/kurangi stempel, dan atur reward.</p>
                     </div>
                 </div>
             </div>
@@ -1170,6 +1165,7 @@
             { id: 'reward', label: 'Reward', icon: 'gift' },
             { id: 'history', label: 'Riwayat', icon: 'history' },
             { id: 'setting', label: 'Setting', icon: 'settings' },
+            { id: 'faq', label: 'FAQ', icon: 'circle-help' },
         ];
 
         let content = '';
@@ -1202,7 +1198,7 @@
                         <p class="text-xs font-bold text-slate-400">Edit Member</p>
                         <input type="text" placeholder="Nama" value="${state.editMember.name}" oninput="handleEditName(this.value)" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
                         <input type="text" placeholder="Alamat" value="${state.editMember.address}" oninput="handleEditAddress(this.value)" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
-                        <input type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Nomor HP (10-13 digit)" value="${state.editMember.phone}" oninput="handleEditPhone(this.value, this)" minlength="10" maxlength="13" autocomplete="off" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
+                        <input type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Nomor HP (awali 0, cth: 08123456789)" value="${state.editMember.phone}" oninput="handleEditPhone(this.value, this)" minlength="10" maxlength="14" autocomplete="off" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
                         <p class="text-xs text-slate-500">ID tidak dapat diubah: <span class="text-slate-300 font-mono">${u.id}</span></p>
                         <div class="flex gap-2">
                             <button type="submit" class="flex-1 py-2 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-bold">Simpan</button>
@@ -1248,7 +1244,7 @@
                     <form onsubmit="handleAddMember(event)" autocomplete="off" class="flex flex-col gap-3">
                         <input type="text" placeholder="Nama Lengkap *" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.newMemberName}" oninput="handleNewMemberName(this.value)" />
                         <input type="text" placeholder="Alamat" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.newMemberAddress}" oninput="handleNewMemberAddress(this.value)" />
-                        <input type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Nomor Handphone (10-13 digit) *" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.newMemberPhone}" oninput="handleNewMemberPhone(this.value, this)" minlength="10" maxlength="13" autocomplete="off" />
+                        <input type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Nomor Handphone (awali 0, cth: 08123456789) *" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-green-500 focus:outline-none" value="${state.newMemberPhone}" oninput="handleNewMemberPhone(this.value, this)" minlength="10" maxlength="14" autocomplete="off" />
                         <p class="text-xs text-slate-500">ID member (10 digit) akan dibuat otomatis oleh sistem.</p>
                         <button type="submit" class="w-full bg-green-600 hover:bg-green-500 py-2.5 rounded-xl font-bold text-white transition-colors">Daftarkan Member</button>
                     </form>
@@ -1312,6 +1308,13 @@
                             <button onclick="toggleQrScanner()" title="Scan QR Code" class="p-2 bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 rounded-xl transition-colors shrink-0">
                                 <i data-lucide="scan-line" class="w-5 h-5"></i>
                             </button>
+                            <select onchange="handleStampSort(this.value)" class="bg-slate-900 border border-slate-600 rounded-xl px-2 py-2 text-xs text-white focus:ring-2 focus:ring-green-500 focus:outline-none shrink-0">
+                                <option value="default"    ${(state.stampSort||'default')==='default'    ? 'selected':''}>Urutan</option>
+                                <option value="az"         ${(state.stampSort||'default')==='az'         ? 'selected':''}>Nama A→Z</option>
+                                <option value="za"         ${(state.stampSort||'default')==='za'         ? 'selected':''}>Nama Z→A</option>
+                                <option value="stamp_desc" ${(state.stampSort||'default')==='stamp_desc' ? 'selected':''}>Stempel ↑</option>
+                                <option value="stamp_asc"  ${(state.stampSort||'default')==='stamp_asc'  ? 'selected':''}>Stempel ↓</option>
+                            </select>
                         </div>
                         <!-- QR Scanner area -->
                         ${state.showQrScanner ? `
@@ -1335,12 +1338,17 @@
                         ${(() => {
                             const STAMP_PAGE_SIZE = 5;
                             const q = (state.stampSearch || '').toLowerCase();
-                            const visibleUsers = q
+                            let visibleUsers = q
                                 ? state.users.filter(u =>
                                     u.name.toLowerCase().includes(q) ||
                                     u.phone.includes(q) ||
                                     (u.id || '').toString().includes(q))
-                                : state.users;
+                                : state.users.slice();
+                            const ss = state.stampSort || 'default';
+                            if (ss === 'az')           visibleUsers = visibleUsers.slice().sort((a, b) => a.name.localeCompare(b.name));
+                            else if (ss === 'za')      visibleUsers = visibleUsers.slice().sort((a, b) => b.name.localeCompare(a.name));
+                            else if (ss === 'stamp_desc') visibleUsers = visibleUsers.slice().sort((a, b) => b.stamps - a.stamps);
+                            else if (ss === 'stamp_asc')  visibleUsers = visibleUsers.slice().sort((a, b) => a.stamps - b.stamps);
                             if (visibleUsers.length === 0) return '<p class="text-slate-500 text-sm text-center p-6">Tidak ada member ditemukan.</p>';
                             const totalStampPages = Math.ceil(visibleUsers.length / STAMP_PAGE_SIZE);
                             const stampPage = Math.min(state.stampMemberPage || 0, Math.max(0, totalStampPages - 1));
@@ -1458,6 +1466,13 @@
                             <button onclick="toggleRedeemQrScanner()" title="Scan QR" class="p-2 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 hover:bg-yellow-500/30 rounded-xl transition-colors shrink-0">
                                 <i data-lucide="${state.showRedeemQrScanner ? 'x' : 'scan-line'}" class="w-5 h-5"></i>
                             </button>
+                            <select onchange="handleRewardSort(this.value)" class="bg-slate-900 border border-slate-600 rounded-xl px-2 py-2 text-xs text-white focus:ring-2 focus:ring-yellow-500 focus:outline-none shrink-0">
+                                <option value="default"    ${(state.rewardSort||'default')==='default'    ? 'selected':''}>Urutan</option>
+                                <option value="az"         ${(state.rewardSort||'default')==='az'         ? 'selected':''}>Nama A→Z</option>
+                                <option value="za"         ${(state.rewardSort||'default')==='za'         ? 'selected':''}>Nama Z→A</option>
+                                <option value="stamp_asc"  ${(state.rewardSort||'default')==='stamp_asc'  ? 'selected':''}>Stempel ↑</option>
+                                <option value="stamp_desc" ${(state.rewardSort||'default')==='stamp_desc' ? 'selected':''}>Stempel ↓</option>
+                            </select>
                         </div>
 
                         ${state.showRedeemQrScanner ? `
@@ -1551,11 +1566,22 @@
                             <span>Sisa stempel</span><span class="font-bold text-white">${sisa} ✦</span>
                         </div>
                     </div>
-                    <button onclick="doRedeemReward()" class="w-full py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
-                        <i data-lucide="check-circle" class="w-5 h-5"></i>
-                        Tukarkan Reward Sekarang
-                    </button>`;
+                    <div class="flex gap-2">
+                        <button onclick="state.redeemRewardId='';render()" class="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                            Batal
+                        </button>
+                        <button onclick="doRedeemReward()" class="flex-1 py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                            <i data-lucide="check-circle" class="w-5 h-5"></i>
+                            Tukarkan
+                        </button>
+                    </div>`;
                     })() : ''}
+                    ${state.redeemMemberId && !state.redeemRewardId ? `
+                    <button onclick="state.redeemMemberId='';state.redeemRewardId='';state.redeemMemberSearch='';render()" class="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                        <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                        Ganti Member
+                    </button>` : ''}
                     ` : ''}
                 </div>
 
@@ -1581,11 +1607,21 @@
                 <div class="space-y-3">
                     ${(() => {
                         if (state.rewards.length === 0) return '<p class="text-center text-slate-500 py-8">Belum ada reward.</p>';
+
+                        // Sort rewards
+                        let sortedRewards = state.rewards.slice();
+                        const rs = state.rewardSort || 'default';
+                        if (rs === 'az')           sortedRewards.sort((a, b) => a.label.localeCompare(b.label));
+                        else if (rs === 'za')      sortedRewards.sort((a, b) => b.label.localeCompare(a.label));
+                        else if (rs === 'stamp_asc')  sortedRewards.sort((a, b) => a.stamps - b.stamps);
+                        else if (rs === 'stamp_desc') sortedRewards.sort((a, b) => b.stamps - a.stamps);
+
                         const RWD_PAGE = 5;
-                        const totalRwdPages = Math.ceil(state.rewards.length / RWD_PAGE);
+                        const totalRwdPages = Math.ceil(sortedRewards.length / RWD_PAGE);
                         const rwdPage = Math.min(state.rewardPage || 0, Math.max(0, totalRwdPages - 1));
-                        const pagedRewards = state.rewards.slice(rwdPage * RWD_PAGE, rwdPage * RWD_PAGE + RWD_PAGE);
+                        const pagedRewards = sortedRewards.slice(rwdPage * RWD_PAGE, rwdPage * RWD_PAGE + RWD_PAGE);
                         const iconOptions2 = ['gift', 'tag', 'percent', 'wrench', 'star', 'award', 'zap', 'heart', 'coffee', 'shopping-bag'];
+
                         const cards = pagedRewards.map(r => {
                             const isEditing = state.editReward && state.editReward.id == r.id;
                             return `
@@ -1620,12 +1656,14 @@
                                 </div>`}
                             </div>`;
                         }).join('');
+
                         const pagination = totalRwdPages > 1 ? `
                         <div class="flex items-center justify-between pt-1">
                             <button onclick="rewardPrevPage()" ${rwdPage === 0 ? 'disabled' : ''} class="py-2 px-4 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl text-sm font-bold transition-colors">← Prev</button>
                             <span class="text-slate-400 text-sm">${rwdPage + 1} / ${totalRwdPages}</span>
                             <button onclick="rewardNextPage()" ${rwdPage >= totalRwdPages - 1 ? 'disabled' : ''} class="py-2 px-4 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded-xl text-sm font-bold transition-colors">Next →</button>
                         </div>` : '';
+
                         return cards + pagination;
                     })()}
                 </div>
@@ -1676,10 +1714,11 @@
                 <div class="space-y-2">
                     ${paged.length === 0 ? '<p class="text-center text-slate-500 py-10">Tidak ada riwayat ditemukan.</p>' :
                         paged.map(h => `
-                        <div class="flex items-center justify-between bg-slate-800 p-3 rounded-xl border border-slate-700">
+                        <div class="flex items-center justify-between bg-slate-800 p-3 rounded-xl border ${h.note ? 'border-yellow-500/30' : 'border-slate-700'}">
                             <div>
                                 <p class="text-sm font-bold text-white">${h.userName || '-'}</p>
                                 <p class="text-xs text-slate-400">${h.date}</p>
+                                ${h.note ? `<p class="text-xs text-yellow-400 font-semibold mt-0.5"><i data-lucide="gift" class="w-3 h-3 inline mr-0.5"></i>${h.note}</p>` : ''}
                                 <p class="text-xs text-slate-500">Total: <span class="text-green-400 font-bold">${h.total}</span></p>
                             </div>
                             <span class="px-3 py-1.5 rounded-lg text-sm font-bold min-w-[48px] text-center ${h.change > 0 ? 'bg-green-500/20 text-green-300 border border-green-500/40' : 'bg-red-500/20 text-red-300 border border-red-500/40'}">
@@ -1725,6 +1764,157 @@
 
                 <div class="bg-slate-800 rounded-2xl border border-slate-700 p-4">
                     <p class="text-xs text-slate-500">Username aktif: <span class="text-white font-bold">${adminCredentials.username}</span></p>
+                </div>
+            </div>`;
+        }
+
+        // ---- MENU FAQ ----
+        else if (menu === 'faq') {
+            const faqs = [
+                {
+                    icon: 'users',
+                    color: 'blue',
+                    title: 'Menu Member',
+                    items: [
+                        { q: 'Apa itu menu Member?', a: 'Menu Member digunakan untuk mengelola seluruh data pelanggan terdaftar. Di sini admin dapat melihat daftar member beserta jumlah stempel yang dimiliki, menambah member baru, mengedit data, hingga menghapus member.' },
+                        { q: 'Bagaimana cara mendaftarkan member baru?', a: 'Klik tombol "Tambah Member Baru", lalu isi Nama Lengkap dan Nomor HP (wajib, minimal 10 digit berawalan 0, contoh: 08123456789), serta Alamat (opsional). Klik "Daftarkan Member". ID member 10 digit dibuat otomatis oleh sistem.' },
+                        { q: 'Bagaimana format nomor HP yang benar?', a: 'Nomor HP wajib diawali angka 0, contoh: 08123456789. Sistem akan otomatis menambahkan angka 0 di depan jika belum ada. Minimal 10 digit, maksimal 14 digit.' },
+                        { q: 'Bagaimana cara mengedit data member?', a: 'Pada kartu member, klik ikon pensil (edit) di sebelah kanan. Ubah data yang diinginkan lalu klik "Simpan". ID member tidak dapat diubah.' },
+                        { q: 'Bagaimana cara menghapus member?', a: 'Klik ikon tempat sampah (hapus) pada kartu member yang ingin dihapus. Konfirmasi penghapusan. Seluruh riwayat stempel member tersebut juga akan ikut terhapus.' },
+                        { q: 'Apakah bisa mencari dan mengurutkan member?', a: 'Ya. Gunakan kotak pencarian untuk mencari berdasarkan nama, nomor HP, atau ID member. Tersedia dropdown pengurutan: Terbaru, Stempel Terbanyak/Terendah, dan Nama A-Z/Z-A.' },
+                    ]
+                },
+                {
+                    icon: 'stamp',
+                    color: 'green',
+                    title: 'Menu Stempel',
+                    items: [
+                        { q: 'Apa itu menu Stempel?', a: 'Menu Stempel digunakan untuk menambah atau mengurangi jumlah stempel pada masing-masing member, sekaligus mengatur jumlah kolom kartu stempel per member.' },
+                        { q: 'Bagaimana cara menambah stempel member?', a: 'Cari member di kolom pencarian atau scan QR Code member. Atur jumlah stempel yang ingin ditambahkan (gunakan tombol + atau ketik langsung), lalu klik tombol ➕ (plus-circle) hijau untuk menambah.' },
+                        { q: 'Bagaimana cara mengurangi stempel member?', a: 'Sama seperti menambah, namun klik tombol ➖ (minus-circle) merah. Sistem akan meminta konfirmasi sebelum stempel dikurangi.' },
+                        { q: 'Apa itu Kolom Stempel Default?', a: 'Kolom stempel default adalah jumlah kotak pada kartu stempel yang berlaku untuk semua member (bawaan: 20). Nilai ini dapat diubah di bagian atas menu Stempel, dan berlaku untuk member yang belum diatur secara individual.' },
+                        { q: 'Bisakah jumlah kolom kartu diatur per member?', a: 'Ya. Di bawah kontrol stempel setiap member, terdapat baris "Atur Jumlah Kolom Kartu". Gunakan tombol +/- untuk mengubah jumlah kolom khusus member tersebut, lalu konfirmasi.' },
+                        { q: 'Apakah bisa scan QR Code untuk cari member?', a: 'Ya. Klik ikon scan di sebelah kiri dropdown sortir untuk membuka kamera dan scan QR Code member. Setelah terbaca, member yang bersangkutan akan langsung ditampilkan.' },
+                        { q: 'Bagaimana cara mengurutkan daftar member di menu Stempel?', a: 'Gunakan dropdown sortir di sebelah kanan tombol scan QR. Pilihan tersedia: Urutan Default, Nama A→Z, Nama Z→A, Stempel Terbanyak (↑), dan Stempel Terendah (↓).' },
+                    ]
+                },
+                {
+                    icon: 'gift',
+                    color: 'yellow',
+                    title: 'Menu Reward',
+                    items: [
+                        { q: 'Apa itu menu Reward?', a: 'Menu Reward memiliki dua fungsi utama: (1) mengelola daftar reward yang bisa ditukar oleh member, dan (2) memproses penukaran reward oleh member yang stempelnya sudah mencukupi.' },
+                        { q: 'Bagaimana cara menambah reward baru?', a: 'Klik tombol "Tambah Reward Baru", isi label reward (contoh: Diskon 10%), jumlah stempel yang dibutuhkan, dan pilih ikon. Klik "Tambah Reward" untuk menyimpan.' },
+                        { q: 'Bagaimana cara menukar reward untuk member?', a: 'Di bagian "Tukar Stempel dengan Reward", cari member dengan mengetik nama/HP/ID atau scan QR Code. Klik nama member, lalu pilih reward yang tersedia. Setelah muncul ringkasan penukaran, klik "Tukarkan" untuk lanjut atau "Batal" untuk membatalkan. Stempel member akan otomatis berkurang dan tercatat di riwayat.' },
+                        { q: 'Bagaimana cara membatalkan penukaran reward?', a: 'Setelah memilih reward dan muncul ringkasan, klik tombol "Batal" (abu-abu) untuk kembali ke pilihan reward. Jika ingin mengganti member, klik tombol "← Ganti Member" yang muncul di bawah info member.' },
+                        { q: 'Reward apa yang tersedia untuk ditukar?', a: 'Hanya reward yang jumlah stempelnya ≤ jumlah stempel member yang tampil sebagai pilihan. Jika member belum memiliki cukup stempel, tidak ada reward yang bisa dipilih.' },
+                        { q: 'Bisakah reward diedit, dihapus, atau diurutkan?', a: 'Ya. Klik ikon pensil untuk mengedit reward, ikon tempat sampah untuk menghapus (butuh konfirmasi). Gunakan dropdown sortir di sebelah kanan tombol scan QR untuk mengurutkan: Nama A→Z/Z→A atau Stempel Tertinggi/Terendah.' },
+                    ]
+                },
+                {
+                    icon: 'history',
+                    color: 'purple',
+                    title: 'Menu Riwayat',
+                    items: [
+                        { q: 'Apa yang ditampilkan di menu Riwayat?', a: 'Menu Riwayat menampilkan seluruh transaksi stempel (penambahan, pengurangan, dan penukaran reward) dari semua member dalam 30 hari terakhir, diurutkan dari yang terbaru.' },
+                        { q: 'Berapa lama riwayat tersimpan?', a: 'Riwayat disimpan selama 30 hari. Data yang lebih lama dari 30 hari akan otomatis dihapus oleh sistem.' },
+                        { q: 'Apakah bisa mencari riwayat member tertentu?', a: 'Ya. Gunakan kotak pencarian untuk menyaring riwayat berdasarkan nama member. Tersedia juga dropdown pengurutan berdasarkan waktu, jumlah stempel, atau nama.' },
+                        { q: 'Apa arti angka berwarna merah dan hijau di riwayat?', a: 'Angka hijau (+) berarti stempel ditambahkan, sedangkan angka merah (-) berarti stempel dikurangi, termasuk saat penukaran reward.' },
+                        { q: 'Bagaimana cara membedakan riwayat penukaran reward dengan penambahan stempel biasa?', a: 'Riwayat penukaran reward ditandai dengan keterangan berwarna kuning bertuliskan "Redeem: [nama reward]" dan border kartu berwarna kuning, sehingga mudah dibedakan dari transaksi stempel biasa.' },
+                    ]
+                },
+                {
+                    icon: 'settings',
+                    color: 'slate',
+                    title: 'Menu Setting',
+                    items: [
+                        { q: 'Apa yang bisa diubah di menu Setting?', a: 'Di menu Setting, admin dapat mengubah username dan password untuk login admin. Kosongkan kolom password jika tidak ingin mengubah password.' },
+                        { q: 'Apakah username bisa dikosongkan?', a: 'Tidak. Username wajib diisi. Jika dikosongkan, sistem akan menolak penyimpanan.' },
+                        { q: 'Apa yang terjadi jika password konfirmasi tidak cocok?', a: 'Sistem akan menampilkan pesan error dan perubahan tidak akan disimpan hingga kedua kolom password cocok.' },
+                        { q: 'Apakah ada sesi otomatis berakhir?', a: 'Ya. Sesi admin akan otomatis berakhir setelah 5 menit tidak ada aktivitas. Timer hitungan mundur ditampilkan di pojok kanan atas. Sesi dapat diperpanjang dengan melakukan aktivitas apapun di halaman admin.' },
+                        { q: 'Apa yang terjadi jika sesi admin habis?', a: 'Admin akan otomatis keluar dan diarahkan ke halaman login. Muncul notifikasi bahwa sesi telah berakhir. Silakan login kembali menggunakan username dan password yang sama.' },
+                    ]
+                },
+            ];
+
+            const colorMap = {
+                blue:   { bg: 'bg-blue-500/10',   border: 'border-blue-500/30',   icon: 'text-blue-400',   badge: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+                green:  { bg: 'bg-green-500/10',  border: 'border-green-500/30',  icon: 'text-green-400',  badge: 'bg-green-500/20 text-green-300 border-green-500/40' },
+                yellow: { bg: 'bg-yellow-500/10', border: 'border-yellow-500/30', icon: 'text-yellow-400', badge: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' },
+                purple: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', icon: 'text-purple-400', badge: 'bg-purple-500/20 text-purple-300 border-purple-500/40' },
+                slate:  { bg: 'bg-slate-600/20',  border: 'border-slate-500/30',  icon: 'text-slate-300',  badge: 'bg-slate-600/30 text-slate-300 border-slate-500/40' },
+            };
+
+            const totalFaqPages = faqs.length;
+            const faqPage = Math.min(state.faqPage || 0, totalFaqPages - 1);
+            const section = faqs[faqPage];
+            const c = colorMap[section.color];
+
+            content = `
+            <div class="space-y-3">
+                <!-- Header -->
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="bg-green-700/30 p-2 rounded-xl"><i data-lucide="circle-help" class="w-5 h-5 text-green-400"></i></div>
+                        <div>
+                            <h2 class="text-sm font-bold text-white">FAQ — Panduan Admin</h2>
+                            <p class="text-xs text-slate-400">Klik pertanyaan untuk melihat jawabannya.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigasi Seksi -->
+                <div class="flex items-center justify-between gap-2">
+                    <button onclick="faqPrevPage()" ${faqPage === 0 ? 'disabled' : ''}
+                        class="flex items-center gap-1 py-2 px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 text-white rounded-xl text-xs font-bold transition-colors">
+                        <i data-lucide="chevron-left" class="w-4 h-4"></i> Prev
+                    </button>
+                    <div class="flex items-center gap-1.5">
+                        ${faqs.map((f, i) => `
+                        <button onclick="state.faqPage=${i};state.faqOpenId=null;render()"
+                            class="w-2.5 h-2.5 rounded-full transition-all ${i === faqPage ? colorMap[f.color].icon.replace('text-','bg-') + ' scale-125' : 'bg-slate-600 hover:bg-slate-500'}">
+                        </button>`).join('')}
+                    </div>
+                    <button onclick="faqNextPage()" ${faqPage >= totalFaqPages - 1 ? 'disabled' : ''}
+                        class="flex items-center gap-1 py-2 px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 text-white rounded-xl text-xs font-bold transition-colors">
+                        Next <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                    </button>
+                </div>
+
+                <!-- Seksi Aktif -->
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
+                    <div class="flex items-center gap-3 px-4 py-3 border-b border-slate-700/80 ${c.bg}">
+                        <div class="p-1.5 rounded-lg ${c.bg} border ${c.border}">
+                            <i data-lucide="${section.icon}" class="w-4 h-4 ${c.icon}"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white text-sm">${section.title}</h3>
+                            <p class="text-xs text-slate-500">${faqPage + 1} / ${totalFaqPages} &mdash; ${section.items.length} pertanyaan</p>
+                        </div>
+                    </div>
+                    <div class="divide-y divide-slate-700/50">
+                        ${section.items.map((item, idx) => {
+                            const faqId = 'faq_' + faqPage + '_' + idx;
+                            const isOpen = state.faqOpenId === faqId;
+                            return `
+                            <div>
+                                <button onclick="toggleFaq('${faqId}')"
+                                    class="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-700/40 transition-colors">
+                                    <span class="flex items-center gap-2.5 flex-1 min-w-0">
+                                        <span class="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${c.badge}">${idx + 1}</span>
+                                        <span class="text-xs font-semibold ${isOpen ? c.icon : 'text-slate-200'}">${item.q}</span>
+                                    </span>
+                                    <i data-lucide="chevron-down" class="w-4 h-4 ${isOpen ? c.icon : 'text-slate-500'} shrink-0 transition-transform duration-200" style="transform:${isOpen ? 'rotate(180deg)' : 'rotate(0deg)'}"></i>
+                                </button>
+                                ${isOpen ? `
+                                <div class="px-4 pb-3">
+                                    <div class="ml-7 bg-slate-900/60 rounded-xl p-3 border ${c.border}">
+                                        <p class="text-xs text-slate-300 leading-relaxed">${item.a}</p>
+                                    </div>
+                                </div>` : ''}
+                            </div>`;
+                        }).join('')}
+                    </div>
                 </div>
             </div>`;
         }
@@ -1834,6 +2024,9 @@
                 { id: '3456789012', name: 'Ahmad Rahman',   address: 'Jl. Sudirman No. 10',   phone: '08345678901', stamps: 10, maxStamps: 0, history: [], createdAt: Date.now() - 1000 }
             ];
         }
+
+        // Bersihkan riwayat lebih dari 30 hari otomatis saat init
+        pruneOldHistory();
 
         // Load settings
         const settingsResult = await apiCall('getSettings');
